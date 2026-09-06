@@ -2,6 +2,7 @@
 // Видео banner.mp4 встроено в ZapretChecker.exe ресурсом и при первом запуске
 // распаковывается в %LOCALAPPDATA%\ZapretChecker. Кнопки поверх видео:
 // 🔊/🔇 — включить/заглушить звук (запоминается), ✕ — скрыть баннер до следующего запуска.
+// Кнопки прозрачные: тёмная подложка появляется только при наведении на них мыши.
 // Если видео недоступно или кодеков нет — баннер просто не показывается, на работу не влияет.
 
 using System;
@@ -9,6 +10,8 @@ using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
+using WpfControls = System.Windows.Controls;
+using WpfMedia = System.Windows.Media;
 
 namespace ZapretChecker
 {
@@ -17,9 +20,8 @@ namespace ZapretChecker
         private const string ResourceName = "banner.mp4";
 
         private ElementHost host;
-        private System.Windows.Controls.MediaElement media;
-        private Button btnMute, btnClose;
-        private ToolTip tips;
+        private WpfControls.MediaElement media;
+        private WpfControls.Border btnMute, btnClose;
         private Timer watchdog;
         private double lastPos = -1;
         private int stuckTicks;
@@ -50,13 +52,13 @@ namespace ZapretChecker
             try
             {
                 host = new ElementHost { Dock = DockStyle.Fill };
-                media = new System.Windows.Controls.MediaElement
+                media = new WpfControls.MediaElement
                 {
                     // Manual с обеих сторон: стартуем и глушим только сами,
                     // иначе WPF на Unloaded может остановить воспроизведение.
-                    LoadedBehavior = System.Windows.Controls.MediaState.Manual,
-                    UnloadedBehavior = System.Windows.Controls.MediaState.Manual,
-                    Stretch = System.Windows.Media.Stretch.Uniform,
+                    LoadedBehavior = WpfControls.MediaState.Manual,
+                    UnloadedBehavior = WpfControls.MediaState.Manual,
+                    Stretch = WpfMedia.Stretch.Uniform,
                     IsMuted = muted,
                     Volume = 1.0
                 };
@@ -70,7 +72,30 @@ namespace ZapretChecker
                     try { StopWatchdog(); Visible = false; } catch { }
                 };
                 media.Source = new Uri(file);
-                host.Child = media;
+
+                // Кнопки в том же WPF-дереве, что и видео — только так подложка
+                // может быть честно полупрозрачной поверх кадра.
+                WpfMedia.Brush hoverBg = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(115, 15, 15, 17));
+                if (hoverBg.CanFreeze) hoverBg.Freeze();
+
+                btnMute = MakeOverlayButton(new System.Windows.Thickness(0, 2, 2, 0), 24);
+                btnMute.MouseLeftButtonUp += delegate
+                {
+                    IsMuted = !IsMuted;
+                    if (MuteChanged != null) MuteChanged(muted);
+                };
+                btnMute.ToolTip = "Заглушить звук";
+
+                btnClose = MakeOverlayButton(new System.Windows.Thickness(0, 2, 28, 0), 20);
+                btnClose.MouseLeftButtonUp += delegate { try { StopWatchdog(); Visible = false; } catch { } };
+                btnClose.ToolTip = "Скрыть баннер (до следующего запуска)";
+
+                var grid = new WpfControls.Grid();
+                grid.Children.Add(media);
+                grid.Children.Add(btnMute);
+                grid.Children.Add(btnClose);
+
+                host.Child = grid;
                 Controls.Add(host);
             }
             catch { Visible = false; return; }
@@ -81,45 +106,51 @@ namespace ZapretChecker
             watchdog.Tick += WatchdogTick;
             watchdog.Start();
 
-            tips = new ToolTip();
-            btnMute = new Button
-            {
-                Size = new Size(24, 18),
-                Location = new Point(Width - 26, 2),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(45, 45, 48),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI Symbol", 8F),
-                TabStop = false
-            };
-            btnMute.FlatAppearance.BorderSize = 0;
-            btnMute.Click += delegate
-            {
-                IsMuted = !IsMuted;
-                if (MuteChanged != null) MuteChanged(muted);
-            };
-            Controls.Add(btnMute);
-            tips.SetToolTip(btnMute, "Заглушить / включить звук");
-
-            btnClose = new Button
-            {
-                Text = "✕",
-                Size = new Size(18, 18),
-                Location = new Point(Width - 46, 2),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(45, 45, 48),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI Symbol", 8F),
-                TabStop = false
-            };
-            btnClose.FlatAppearance.BorderSize = 0;
-            btnClose.Click += delegate { StopWatchdog(); Visible = false; };
-            Controls.Add(btnClose);
-            tips.SetToolTip(btnClose, "Скрыть баннер (до следующего запуска)");
-
-            btnMute.BringToFront();
-            btnClose.BringToFront();
             UpdateMuteButton();
+        }
+
+        // Прозрачная кнопка-плашка с глифом: подложка видна только при наведении
+        private static WpfControls.Border MakeOverlayButton(System.Windows.Thickness margin, int width)
+        {
+            var text = new WpfControls.TextBlock
+            {
+                FontFamily = new WpfMedia.FontFamily("Segoe UI Symbol"),
+                FontSize = 10,
+                Foreground = WpfMedia.Brushes.White,
+                TextAlignment = System.Windows.TextAlignment.Center
+            };
+            var border = new WpfControls.Border
+            {
+                Child = text,
+                Width = width,
+                Height = 17,
+                Margin = margin,
+                CornerRadius = new System.Windows.CornerRadius(3),
+                Background = WpfMedia.Brushes.Transparent,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+                VerticalAlignment = System.Windows.VerticalAlignment.Top,
+                Cursor = System.Windows.Input.Cursors.Hand
+            };
+            border.MouseEnter += delegate { try { border.Background = OverlayBg; } catch { } };
+            border.MouseLeave += delegate { try { border.Background = WpfMedia.Brushes.Transparent; } catch { } };
+            return border;
+        }
+
+        private static WpfMedia.Brush OverlayBg
+        {
+            get
+            {
+                WpfMedia.Brush b = new WpfMedia.SolidColorBrush(WpfMedia.Color.FromArgb(115, 15, 15, 17));
+                if (b.CanFreeze) b.Freeze();
+                return b;
+            }
+        }
+
+        private void UpdateMuteButton()
+        {
+            if (btnMute == null) return;
+            ((WpfControls.TextBlock)btnMute.Child).Text = muted ? "🔇" : "🔊";
+            btnMute.ToolTip = muted ? "Включить звук" : "Заглушить звук";
         }
 
         private void WatchdogTick(object sender, EventArgs e)
@@ -145,13 +176,6 @@ namespace ZapretChecker
         private void StopWatchdog()
         {
             try { if (watchdog != null) watchdog.Stop(); } catch { }
-        }
-
-        private void UpdateMuteButton()
-        {
-            if (btnMute == null) return;
-            btnMute.Text = muted ? "🔇" : "🔊";
-            if (tips != null) tips.SetToolTip(btnMute, muted ? "Включить звук" : "Заглушить звук");
         }
 
         protected override void OnHandleDestroyed(EventArgs e)
