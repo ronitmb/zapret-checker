@@ -305,54 +305,68 @@ namespace ZapretSetup
                 await Task.Run(() => Directory.CreateDirectory(targetDir));
                 progress.PerformStep();
 
+                // Программа берётся из файла рядом с Setup.exe, а если его нет —
+                // из копии, встроенной прямо в Setup.exe (скачивать больше ничего не нужно).
+                bool exeOk = false;
                 if (File.Exists(srcExe))
                 {
-                    Log("Копирование ZapretChecker.exe…");
+                    Log("Копирование ZapretChecker.exe (файл рядом с Setup.exe)…");
                     await Task.Run(() => File.Copy(srcExe, exeDst, true));
+                    exeOk = File.Exists(exeDst);
                 }
                 else
                 {
-                    Log("!! Рядом с Setup.exe нет ZapretChecker.exe — копирование пропущено.");
-                    ok = false;
-                }
-                progress.PerformStep();
-
-                if (chkStart.Checked)
-                {
-                    Log("Ярлык в меню «Пуск»: " + startLnk);
-                    if (!await Task.Run(() => CreateShortcut(startLnk, exeDst, targetDir, desc)))
+                    Log("Файл программы не найден рядом — беру встроенную копию из Setup.exe…");
+                    byte[] emb = await Task.Run(() => EmbeddedFile("ZapretChecker.exe"));
+                    if (emb != null)
                     {
-                        Log("   !! не удалось создать");
-                        ok = false;
+                        await Task.Run(() => File.WriteAllBytes(exeDst, emb));
+                        exeOk = true;
                     }
                 }
+                if (exeOk) Log("   ZapretChecker.exe установлен.");
+                else { Log("!! ZapretChecker.exe не найден ни рядом с Setup.exe, ни внутри — установка прервана."); ok = false; }
                 progress.PerformStep();
 
-                if (chkDesk.Checked)
+                if (exeOk)
                 {
-                    Log("Ярлык на рабочий стол: " + deskLnk);
-                    if (!await Task.Run(() => CreateShortcut(deskLnk, exeDst, targetDir, desc)))
+                    if (chkStart.Checked)
                     {
-                        Log("   !! не удалось создать");
-                        ok = false;
+                        Log("Ярлык в меню «Пуск»: " + startLnk);
+                        if (!await Task.Run(() => CreateShortcut(startLnk, exeDst, targetDir, desc)))
+                        {
+                            Log("   !! не удалось создать");
+                            ok = false;
+                        }
                     }
+                    progress.PerformStep();
+
+                    if (chkDesk.Checked)
+                    {
+                        Log("Ярлык на рабочий стол: " + deskLnk);
+                        if (!await Task.Run(() => CreateShortcut(deskLnk, exeDst, targetDir, desc)))
+                        {
+                            Log("   !! не удалось создать");
+                            ok = false;
+                        }
+                    }
+                    progress.PerformStep();
+
+                    if (chkTask.Checked)
+                    {
+                        Log("Создание задачи «" + TaskName + "» (запуск без UAC)…");
+                        string err = await Task.Run(() => CreateNoUacTask(exeDst));
+                        if (err == null) Log("   готово — запускайте через run-no-uac.cmd");
+                        else { Log("   !! " + err); ok = false; }
+                    }
+                    progress.PerformStep();
+
+                    Log("Создание run-no-uac.cmd и uninstall.cmd…");
+                    await Task.Run(delegate { WriteCmdFiles(targetDir, deskLnk, startLnk, catDir); });
+                    progress.PerformStep();
                 }
-                progress.PerformStep();
 
-                if (chkTask.Checked)
-                {
-                    Log("Создание задачи «" + TaskName + "» (запуск без UAC)…");
-                    string err = await Task.Run(() => CreateNoUacTask(exeDst));
-                    if (err == null) Log("   готово — запускайте через run-no-uac.cmd");
-                    else { Log("   !! " + err); ok = false; }
-                }
-                progress.PerformStep();
-
-                Log("Создание run-no-uac.cmd и uninstall.cmd…");
-                await Task.Run(delegate { WriteCmdFiles(targetDir, deskLnk, startLnk, catDir); });
-                progress.PerformStep();
-
-                Log(ok ? "Установка завершена успешно!" : "Установка завершена с предупреждениями (см. журнал выше).");
+                Log(ok ? "Установка завершена успешно!" : "Установка не завершена — см. сообщения выше.");
             }
             catch (Exception ex)
             {
@@ -360,11 +374,33 @@ namespace ZapretSetup
                 if (ex.InnerException != null) Log("   " + ex.InnerException.Message);
                 ok = false;
             }
-            progress.PerformStep();
+            progress.Value = progress.Maximum;
 
-            lblFinishPath.Text = "Установлено в папку: " + targetDir;
+            lblFinishPath.Text = ok
+                ? "Установлено в папку: " + targetDir
+                : "Установка не выполнена — см. журнал на предыдущем шаге.";
             lblFinishPath.ForeColor = ok ? Color.Black : Color.Firebrick;
+            chkRun.Enabled = ok;
+            if (!ok) chkRun.Checked = false;
             ShowPage(4);
+        }
+
+        // Файл, встроенный в Setup.exe при сборке (/resource:…), либо null
+        private static byte[] EmbeddedFile(string name)
+        {
+            try
+            {
+                using (Stream s = typeof(SetupForm).Assembly.GetManifestResourceStream(name))
+                {
+                    if (s == null) return null;
+                    using (var ms = new MemoryStream())
+                    {
+                        s.CopyTo(ms);
+                        return ms.ToArray();
+                    }
+                }
+            }
+            catch { return null; }
         }
 
         // Ярлык создаётся обычной записью .lnk-файла, без вызовов обновления/перестроения

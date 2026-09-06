@@ -60,11 +60,13 @@ namespace ZapretChecker
         private CheckBox chkFast;
         private TextBox txtLog;
         private LinkLabel lnkRepo;
+        private AdBannerBox adBanner;
 
         private CancellationTokenSource cts;
         private List<PresetInfo> presets = new List<PresetInfo>();
         private List<PresetResult> lastResults = new List<PresetResult>();
         private bool running;
+        private bool adMuted;
 
         public static bool ConsoleMode;
 
@@ -118,6 +120,15 @@ namespace ZapretChecker
             btnStop.Click += BtnStop_Click;
             btnLaunch.Click += BtnLaunch_Click;
             Controls.Add(btnRun); Controls.Add(btnStop); Controls.Add(btnLaunch);
+
+            // Рекламный баннер (зацикленное видео) справа от «Стоп»
+            adBanner = new AdBannerBox
+            {
+                Location = new Point(ClientSize.Width - 108, 58),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            adBanner.MuteChanged += delegate { adMuted = adBanner.IsMuted; SaveSettings(); };
+            Controls.Add(adBanner);
 
             int listTop = 126;
             int listHeight = ClientSize.Height - 160 - listTop - 8;
@@ -190,6 +201,7 @@ namespace ZapretChecker
         private void MainForm_Load(object sender, EventArgs e)
         {
             LoadSettings();
+            if (adBanner != null) adBanner.IsMuted = adMuted;
             string dir = txtDir.Text.Trim();
             if (dir.Length > 0 && Directory.Exists(dir) && ScanPresets(dir).Count > 0)
             {
@@ -885,6 +897,7 @@ namespace ZapretChecker
                 sb.AppendLine("warmup=" + (int)numWarmup.Value);
                 sb.AppendLine("fast=" + (chkFast.Checked ? "1" : "0"));
                 sb.AppendLine("baseline=" + (chkBaseline.Checked ? "1" : "0"));
+                sb.AppendLine("admuted=" + (adMuted ? "1" : "0"));
                 File.WriteAllText(SettingsPath(), sb.ToString(), new UTF8Encoding(false));
             }
             catch { }
@@ -916,6 +929,7 @@ namespace ZapretChecker
                     }
                     else if (k == "fast") chkFast.Checked = v == "1";
                     else if (k == "baseline") chkBaseline.Checked = v == "1";
+                    else if (k == "admuted") adMuted = v == "1";
                 }
             }
             catch { }
